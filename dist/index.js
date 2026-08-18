@@ -166,6 +166,7 @@ async function ensureTerminal(ctx, cwd, agentRoot, sessionId, signal) {
   await ctx.timer.timeout(300);
   await tmuxSend(ctx, cwd, t, `source ${sq(join(agentRoot, "agent.zsh"))}`, signal);
   const deadline = Date.now() + 60000;
+  let ready = false;
   for (;; ) {
     if (signal?.aborted)
       throw new Error("aborted");
@@ -173,10 +174,28 @@ async function ensureTerminal(ctx, cwd, agentRoot, sessionId, signal) {
     const cap = await runSh(ctx, cwd, `tmux -S ${sq(t.socket)} capture-pane -p -t ${sq(t.session)} 2>/dev/null`, {
       timeoutMs: 1e4
     });
-    if (cap.stdout.includes("[none]"))
+    if (cap.stdout.includes("[none]")) {
+      ready = true;
       break;
+    }
     if (Date.now() > deadline)
       break;
+  }
+  if (ready) {
+    const prev = lastCred.get(sessionId);
+    if (prev) {
+      try {
+        await tmuxSend(ctx, cwd, t, `credential claim ${sq(prev)}`, signal);
+        const after = await readCredential(ctx, cwd, t, signal);
+        if (after === prev) {
+          console.error(`[agsh] ensureTerminal: 重建终端已自动 re-claim ${prev}`);
+        } else {
+          console.error(`[agsh] ensureTerminal: re-claim ${prev} 未生效(读回 ${JSON.stringify(after)};可能被其他会话锁挡下),终端保持无凭证`);
+        }
+      } catch (e) {
+        console.error(`[agsh] ensureTerminal: re-claim 失败: ${e?.message ?? String(e)}`);
+      }
+    }
   }
   return t;
 }
@@ -185,21 +204,49 @@ async function readCredential(ctx, cwd, t, signal) {
   const file = join(tmpDir, `agsh_cred_${Date.now()}_${counter++}.txt`);
   await tmuxSend(ctx, cwd, t, `printf '%s' "${"${CREDENTIAL:-}"}" > ${sq(file)}`, signal);
   const deadline = Date.now() + 8000;
+  let emptySince = 0;
   for (;; ) {
     const v = safeRead(file);
-    if (v !== "" || existsSync(file)) {
+    if (v !== "") {
       try {
         rmSync(file);
       } catch {}
       return v.trim();
     }
+    if (existsSync(file)) {
+      if (!emptySince)
+        emptySince = Date.now();
+      if (Date.now() - emptySince > 1200) {
+        try {
+          rmSync(file);
+        } catch {}
+        return null;
+      }
+    } else {
+      emptySince = 0;
+    }
     if (Date.now() >= deadline) {
       try {
         rmSync(file);
       } catch {}
-      return "";
+      return null;
     }
     await ctx.timer.timeout(300);
+  }
+}
+async function credentialBound(cwd, cred) {
+  const lockFile = join(cwd, ".agsh", "nodes", cred, ".lock");
+  const raw = safeRead(lockFile).trim();
+  if (!raw)
+    return false;
+  const pid = Number(raw);
+  if (!Number.isFinite(pid) || pid <= 0)
+    return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 async function execInTerminal(ctx, cwd, t, cred, cmd, callId, signal) {
@@ -374,13 +421,18 @@ function apply(ctx) {
         return { content: "[节点段已结束] 本节点已 credential drop,本轮不再执行命令。请直接给出最终回复;下一条用户消息将回到本节点继续。" };
       }
       const beforeCred = await readCredential(ctx, cwd, t, exec.signal);
-      const content = await execInTerminal(ctx, cwd, t, beforeCred, cmd, String(exec.callId), exec.signal);
-      const afterCred = await readCredential(ctx, cwd, t, exec.signal);
-      if (beforeCred && !afterCred) {
-        segmentEnded.set(sid, true);
-        return { content: `${content}
+      const content = await execInTerminal(ctx, cwd, t, beforeCred ?? "", cmd, String(exec.callId), exec.signal);
+      let afterCred = await readCredential(ctx, cwd, t, exec.signal);
+      if (beforeCred && afterCred === null) {
+        afterCred = await readCredential(ctx, cwd, t, exec.signal);
+      }
+      if (beforeCred && afterCred === null) {
+        if (!await credentialBound(cwd, beforeCred)) {
+          segmentEnded.set(sid, true);
+          return { content: `${content}
 
 [节点段已结束] 凭证已释放(${beforeCred})。请直接给出最终回复;下一条用户消息将回到本节点继续。` };
+        }
       }
       return { content };
     }
