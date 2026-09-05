@@ -1,0 +1,23 @@
+{
+  "name": "dsh-agsh-context",
+  "version": "0.1.0",
+  "description": "AgentShell 嵌入 DSH 的桥插件:唯一 shell 工具(持续终端)+ pre-step 落点 + llm/stream 短路接管",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "preset",
+    "README.md",
+    "INSTALL.md"
+  ],
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --target=node --external '@deepseek-ai/cordis' --external '@deepseek-ai/dsh-llm'"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6"
+  }
+}

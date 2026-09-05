@@ -1,0 +1,14 @@
+node_modules/
+.agsh/
+*.tgz
+.DS_Store
+
+# ---- 2026-09-06 泄漏应急加固 ----
+.env*
+*.log
+*.bak
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Pre-push 密钥门禁:推送前扫描可达历史,发现密钥即拒绝推送。
+# 安装: git config core.hooksPath .githooks(本仓已配)
+set -euo pipefail
+
+repo="$(git rev-parse --show-toplevel)"
+cfg="$repo/.gitleaks.toml"
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "[pre-push] BLOCKED: gitleaks 未安装(brew install gitleaks)" >&2
+  exit 1
+fi
+if [[ ! -f "$cfg" ]]; then
+  echo "[pre-push] BLOCKED: 缺少 $cfg" >&2
+  exit 1
+fi
+
+# 分发流程会压平/重写历史,所以扫全量可达提交而非增量 diff
+cd "$repo"
+echo "[pre-push] gitleaks 扫描中..."
+if ! gitleaks detect --source "$repo" --config "$cfg" --log-opts="--all" --redact; then
+  echo "[pre-push] BLOCKED: 检测到密钥,推送已拦截。清除后再推。" >&2
+  exit 1
+fi
+echo "[pre-push] 扫描通过,推送放行。"
+exit 0
