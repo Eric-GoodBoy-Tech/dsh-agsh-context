@@ -1,0 +1,13 @@
+# Agent Shell 分发仓密钥门禁配置(2026-09-06)
+# 在 gitleaks 默认规则之上,补 DeepSeek API key 专属规则。
+# 事故背景: sk-* 形式的 DeepSeek key 曾被整树快照带进公开仓。
+title = "agent-shell secret guard"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "deepseek-api-key"
+description = "DeepSeek API key (sk- + 32 hex)"
+regex = '''(?i)sk-[a-f0-9]{32}'''
+secretGroup = 0
